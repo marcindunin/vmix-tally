@@ -1,0 +1,6 @@
+services:
+  tally:
+    build: .
+    ports:
+      - "2627:80"
+    restart: unless-stopped

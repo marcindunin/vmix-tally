@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>vMix Tally</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    /* ── Fullscreen tally ─────────────────────────────────── */
+    .fs {
+      width: 100vw; height: 100dvh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      font-family: Arial, sans-serif; color: white;
+      user-select: none;
+    }
+    .fs.off     { background: #111; }
+    .fs.program { background: #cc0000; }
+    .fs.preview { background: #009900; }
+    .fs.error   { background: #444; }
+
+    #fs-name  { font-size: 10vw; font-weight: bold; text-align: center; padding: 0 6vw; }
+    #fs-state { font-size: 5vw; margin-top: 2vh; letter-spacing: .12em; }
+    #fs-info  { position: fixed; bottom: 8px; right: 10px; font-size: 11px; opacity: .3; }
+
+    /* ── List mode ─────────────────────────────────────────── */
+    .list {
+      font-family: Arial, sans-serif; background: #111;
+      color: #eee; min-height: 100dvh; padding: 20px;
+    }
+    .list h1   { font-size: 1.1em; margin-bottom: 6px; opacity: .6; font-weight: normal; }
+    #list-info { font-size: .8em; opacity: .4; margin-bottom: 16px; }
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 8px;
+    }
+    .cell {
+      border-radius: 6px; padding: 14px 10px; text-align: center;
+      cursor: pointer; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 4px; min-height: 90px;
+    }
+    .cell:hover   { filter: brightness(1.15); }
+    .cell.off     { background: #2a2a2a; }
+    .cell.program { background: #cc0000; }
+    .cell.preview { background: #009900; }
+    .c-num   { font-size: .68em; opacity: .55; }
+    .c-name  { font-size: .85em; font-weight: bold; word-break: break-word; }
+    .c-label { font-size: .65em; letter-spacing: .06em; opacity: .8; min-height: 1em; }
+
+    /* ── Settings button ───────────────────────────────────── */
+    #settings-btn {
+      position: fixed; top: 12px; right: 12px;
+      background: none; border: none; color: white;
+      font-size: 20px; cursor: pointer; opacity: .3;
+      z-index: 10; padding: 6px; line-height: 1;
+      border-radius: 6px;
+    }
+    #settings-btn:hover { opacity: 1; background: rgba(255,255,255,.1); }
+
+    /* ── Settings modal ────────────────────────────────────── */
+    #settings-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.75);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 100;
+    }
+    #settings-overlay[hidden] { display: none; }
+
+    #settings-panel {
+      background: #222; border-radius: 10px;
+      padding: 28px 28px 24px;
+      width: min(340px, 90vw);
+      display: flex; flex-direction: column; gap: 18px;
+      color: white; font-family: Arial, sans-serif;
+      box-shadow: 0 8px 32px rgba(0,0,0,.6);
+    }
+    #settings-panel h2 { font-size: 1.1em; opacity: .65; font-weight: normal; }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label { font-size: .8em; opacity: .55; letter-spacing: .03em; }
+    .field input {
+      background: #333; border: 1px solid #555; border-radius: 6px;
+      padding: 10px 12px; color: white; font-size: 1em; width: 100%; outline: none;
+    }
+    .field input:focus { border-color: #888; }
+
+    .settings-btns { display: flex; gap: 10px; justify-content: flex-end; }
+    .btn {
+      border: none; border-radius: 6px; padding: 9px 20px;
+      font-size: .9em; cursor: pointer; color: white;
+    }
+    .btn-cancel { background: #3a3a3a; }
+    .btn-cancel:hover { background: #4a4a4a; }
+    .btn-save { background: #0066cc; font-weight: bold; }
+    .btn-save:hover { background: #0077ee; }
+  </style>
+</head>
+<body>
+
+<script>
+// ── Config ───────────────────────────────────────────────────
+const DEFAULT_HOST = '192.168.10.100:8088';
+const params  = new URLSearchParams(location.search);
+const TALLY   = params.has('tally') ? parseInt(params.get('tally')) : null;
+let   HOST    = params.get('host') || localStorage.getItem('vmix-host') || DEFAULT_HOST;
+const INTERVAL = 150; // ms
+
+// ── Build page DOM ───────────────────────────────────────────
+if (TALLY !== null) {
+  document.body.className = 'fs off';
+  document.body.innerHTML =
+    `<div id="fs-name">…</div>` +
+    `<div id="fs-state">Connecting…</div>` +
+    `<div id="fs-info">#${TALLY} @ ${HOST}</div>`;
+} else {
+  document.body.className = 'list';
+  document.body.innerHTML =
+    `<h1>vMix Tally</h1>` +
+    `<div id="list-info">${HOST}</div>` +
+    `<div id="grid"></div>`;
+}
+
+// Settings button + modal (injected into body regardless of mode)
+document.body.insertAdjacentHTML('beforeend', `
+  <button id="settings-btn" title="Settings">⚙</button>
+
+  <div id="settings-overlay" hidden>
+    <div id="settings-panel">
+      <h2>Settings</h2>
+      <div class="field">
+        <label for="host-input">vMix IP address &amp; port</label>
+        <input id="host-input" type="text" spellcheck="false"
+               autocomplete="off" placeholder="192.168.1.100:8088">
+      </div>
+      <div class="settings-btns">
+        <button class="btn btn-cancel" id="btn-cancel">Cancel</button>
+        <button class="btn btn-save"   id="btn-save">Save</button>
+      </div>
+    </div>
+  </div>
+`);
+
+// ── Settings logic ───────────────────────────────────────────
+const overlay   = document.getElementById('settings-overlay');
+const hostInput = document.getElementById('host-input');
+
+document.getElementById('settings-btn').onclick = () => {
+  hostInput.value = HOST;
+  overlay.hidden  = false;
+  hostInput.focus();
+  hostInput.select();
+};
+
+function closeSettings() { overlay.hidden = true; }
+
+document.getElementById('btn-cancel').onclick = closeSettings;
+overlay.addEventListener('click', e => { if (e.target === overlay) closeSettings(); });
+hostInput.addEventListener('keydown', e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') closeSettings(); });
+
+function save() {
+  const val = hostInput.value.trim();
+  if (!val) return;
+  HOST = val;
+  localStorage.setItem('vmix-host', val);
+  closeSettings();
+  // Update info text immediately; polling picks up new HOST on next tick
+  const info = document.getElementById('fs-info') || document.getElementById('list-info');
+  if (info) info.textContent = TALLY !== null ? `#${TALLY} @ ${HOST}` : HOST;
+}
+document.getElementById('btn-save').onclick = save;
+
+// ── XML helper ───────────────────────────────────────────────
+function childInt(el, tag) {
+  for (const c of el.children)
+    if (c.tagName === tag) return parseInt(c.textContent) || 0;
+  return 0;
+}
+
+// ── Parse vMix XML → tally map ───────────────────────────────
+//
+// Tally rules:
+//   RED   – input is reachable from Mix1's PGM via layer/mix cascade
+//   GREEN – input is reachable from Mix1's PRV via layer/mix cascade
+//           (blocked from green if already red)
+//
+// Cascade steps (applied recursively):
+//   1. Layer containment: if input X is on-air/on-preview, every input
+//      used as a layer inside X is also on-air/on-preview.
+//   2. Mix PGM: if a Mix-type input is on-air/on-preview, the camera
+//      on PGM of that mix is also on-air/on-preview.
+//   PRV of sub-mixes is never cascaded — only PGM propagates.
+//
+// This handles: Mix2 embedded as a layer inside a MultiLayer/GT source
+// that is on PGM or PRV of Mix1.
+//
+function parse(xml) {
+  const root = xml.documentElement;
+
+  // --- mix states ---
+  const mixes = {
+    1: { active: childInt(root, 'active'), preview: childInt(root, 'preview') }
+  };
+  for (const el of root.children) {
+    if (el.tagName !== 'mix') continue;
+    const n = parseInt(el.getAttribute('number'));
+    if (n === 1) continue;
+    mixes[n] = { active: childInt(el, 'active'), preview: childInt(el, 'preview') };
+  }
+
+  // --- inputs ---
+  const inputs      = {};  // inputNum → { title }
+  const inputToMix  = {};  // inputNum → mixNum  (Mix-type inputs only)
+  const keyToInput  = {};  // GUID key → inputNum
+  const inputLayers = {};  // inputNum → [inputNums used as layers inside it]
+
+  const inputsEl = root.querySelector('inputs');
+  if (inputsEl) {
+    // Pass 1: basic info + key map
+    let mixCounter = 2;
+    for (const el of inputsEl.children) {
+      const num  = parseInt(el.getAttribute('number'));
+      const type = el.getAttribute('type') || '';
+      const key  = el.getAttribute('key') || '';
+      inputs[num] = { title: el.getAttribute('title') || `Input ${num}` };
+      if (key) keyToInput[key] = num;
+      if (type === 'Mix') inputToMix[num] = mixCounter++;
+    }
+
+    // Pass 2: layer references — vMix can expose them as:
+    //   child <layer key="GUID"> / <overlay key="GUID">
+    //   or attributes overlay0key … overlay9key / layer0key … layer9key
+    for (const el of inputsEl.children) {
+      const num  = parseInt(el.getAttribute('number'));
+      const refs = new Set();
+
+      for (const child of el.children) {
+        if (child.tagName !== 'layer' && child.tagName !== 'overlay') continue;
+        const k = child.getAttribute('key') || child.getAttribute('src') || child.getAttribute('input');
+        if (k && keyToInput[k] !== undefined) refs.add(keyToInput[k]);
+      }
+      for (let i = 0; i <= 9; i++) {
+        for (const attr of [`overlay${i}key`, `layer${i}key`]) {
+          const k = el.getAttribute(attr);
+          if (k && keyToInput[k] !== undefined) refs.add(keyToInput[k]);
+        }
+      }
+
+      if (refs.size) inputLayers[num] = [...refs];
+    }
+  }
+
+  // --- cascade: expand a set of inputs via layers + mix PGM ---
+  // blocked set prevents on-preview from encroaching on on-air inputs.
+  function expand(inputSet, blocked) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const num of [...inputSet]) {
+        // cascade into layers embedded inside this input
+        for (const child of (inputLayers[num] || [])) {
+          if (!inputSet.has(child) && !blocked?.has(child)) {
+            inputSet.add(child); changed = true;
+          }
+        }
+        // cascade into PGM of the mix this input represents
+        const mixNum = inputToMix[num];
+        if (mixNum !== undefined) {
+          const pgm = mixes[mixNum]?.active;
+          if (pgm && !inputSet.has(pgm) && !blocked?.has(pgm)) {
+            inputSet.add(pgm); changed = true;
+          }
+        }
+      }
+    }
+  }
+
+  // on-air: starts from Mix1 PGM
+  const onAir = new Set();
+  if (mixes[1].active) onAir.add(mixes[1].active);
+  expand(onAir, null);
+
+  // on-preview: starts from Mix1 PRV, blocked by on-air
+  const onPrv = new Set();
+  if (mixes[1].preview) onPrv.add(mixes[1].preview);
+  expand(onPrv, onAir);
+
+  // --- tally per input ---
+  const tally = {};
+  for (const ns of Object.keys(inputs)) {
+    const n = +ns;
+    tally[n] = onAir.has(n) ? 'program' : onPrv.has(n) ? 'preview' : 'off';
+  }
+
+  return { inputs, tally };
+}
+
+// ── Update loop ──────────────────────────────────────────────
+async function update() {
+  try {
+    const r = await fetch(`http://${HOST}/api`, { cache: 'no-cache' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const xml = new DOMParser().parseFromString(await r.text(), 'text/xml');
+    const { inputs, tally } = parse(xml);
+
+    if (TALLY !== null) {
+      const state = tally[TALLY] || 'off';
+      document.body.className = `fs ${state}`;
+      document.getElementById('fs-name').textContent  = inputs[TALLY]?.title ?? `Input ${TALLY}`;
+      document.getElementById('fs-state').textContent =
+        state === 'program' ? 'PROGRAM' : state === 'preview' ? 'PREVIEW' : 'OFF';
+
+    } else {
+      const grid   = document.getElementById('grid');
+      const sorted = Object.keys(inputs).map(Number).sort((a, b) => a - b);
+
+      if (grid.children.length !== sorted.length) {
+        grid.innerHTML = '';
+        sorted.forEach(num => {
+          const cell = document.createElement('div');
+          cell.innerHTML =
+            `<div class="c-num"></div>` +
+            `<div class="c-name"></div>` +
+            `<div class="c-label"></div>`;
+          cell.addEventListener('click', () => open(`?tally=${num}&host=${HOST}`, '_blank'));
+          grid.appendChild(cell);
+        });
+      }
+
+      sorted.forEach((num, i) => {
+        const cell  = grid.children[i];
+        const state = tally[num];
+        cell.className           = `cell ${state}`;
+        cell.children[0].textContent = `#${num}`;
+        cell.children[1].textContent = inputs[num].title;
+        cell.children[2].textContent =
+          state === 'program' ? 'PROGRAM' : state === 'preview' ? 'PREVIEW' : '';
+      });
+    }
+
+  } catch (e) {
+    if (TALLY !== null) {
+      document.body.className = 'fs error';
+      document.getElementById('fs-state').textContent = e.message;
+    }
+  }
+}
+
+setInterval(update, INTERVAL);
+update();
+</script>
+</body>
+</html>
