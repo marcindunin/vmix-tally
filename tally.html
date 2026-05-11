@@ -15,10 +15,12 @@
       font-family: Arial, sans-serif; color: white;
       user-select: none;
     }
-    .fs.off     { background: #111; }
-    .fs.program { background: #cc0000; }
-    .fs.preview { background: #009900; }
-    .fs.error   { background: #444; }
+    .fs.off              { background: #111; }
+    .fs.program          { background: #cc0000; }
+    .fs.preview          { background: #009900; }
+    .fs.program-indirect { background: #D9005E; }
+    .fs.preview-indirect { background: #B2C728; color: #111; }
+    .fs.error            { background: #444; }
 
     #fs-name  { font-size: 10vw; font-weight: bold; text-align: center; padding: 0 6vw; }
     #fs-state { font-size: 5vw; margin-top: 2vh; letter-spacing: .12em; }
@@ -43,9 +45,11 @@
       gap: 4px; min-height: 90px;
     }
     .cell:hover   { filter: brightness(1.15); }
-    .cell.off     { background: #2a2a2a; }
-    .cell.program { background: #cc0000; }
-    .cell.preview { background: #009900; }
+    .cell.off              { background: #2a2a2a; }
+    .cell.program          { background: #cc0000; }
+    .cell.preview          { background: #009900; }
+    .cell.program-indirect { background: #D9005E; }
+    .cell.preview-indirect { background: #B2C728; color: #111; }
     .c-num   { font-size: .68em; opacity: .55; }
     .c-name  { font-size: .85em; font-weight: bold; word-break: break-word; }
     .c-label { font-size: .65em; letter-spacing: .06em; opacity: .8; min-height: 1em; }
@@ -288,10 +292,18 @@ function parse(xml) {
   expand(onPrv, onAir);
 
   // --- tally per input ---
+  // Direct = exactly Mix1's active/preview; indirect = reached via cascade
+  const mix1Active  = mixes[1].active;
+  const mix1Preview = mixes[1].preview;
   const tally = {};
   for (const ns of Object.keys(inputs)) {
     const n = +ns;
-    tally[n] = onAir.has(n) ? 'program' : onPrv.has(n) ? 'preview' : 'off';
+    if (onAir.has(n))
+      tally[n] = (n === mix1Active)  ? 'program'          : 'program-indirect';
+    else if (onPrv.has(n))
+      tally[n] = (n === mix1Preview) ? 'preview'          : 'preview-indirect';
+    else
+      tally[n] = 'off';
   }
 
   return { inputs, tally };
@@ -310,7 +322,7 @@ async function update() {
       document.body.className = `fs ${state}`;
       document.getElementById('fs-name').textContent  = inputs[TALLY]?.title ?? `Input ${TALLY}`;
       document.getElementById('fs-state').textContent =
-        state === 'program' ? 'PROGRAM' : state === 'preview' ? 'PREVIEW' : 'OFF';
+        state.startsWith('program') ? 'PROGRAM' : state.startsWith('preview') ? 'PREVIEW' : 'OFF';
 
     } else {
       const grid   = document.getElementById('grid');
@@ -336,7 +348,7 @@ async function update() {
         cell.children[0].textContent = `#${num}`;
         cell.children[1].textContent = inputs[num].title;
         cell.children[2].textContent =
-          state === 'program' ? 'PROGRAM' : state === 'preview' ? 'PREVIEW' : '';
+          state.startsWith('program') ? 'PROGRAM' : state.startsWith('preview') ? 'PREVIEW' : '';
       });
     }
 
